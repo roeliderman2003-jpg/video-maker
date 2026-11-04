@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>סטודיו סרטונים</title>
+<meta name="description" content="עורכים סרטון לבד: מעלים סרטון, בירולים ולפני/אחרי, בוחרים אורך ומקבלים כמה גרסאות מוכנות. הכל רץ אצלך במחשב.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="mark">✂</div>
+    <div>
+      <h1>סטודיו סרטונים</h1>
+      <p>מעלים חומרים, בוחרים אורך וסגנון, ומקבלים כמה סרטונים מוכנים. הכל קורה אצלך במחשב, ושום קובץ לא עולה לשום מקום.</p>
+    </div>
+  </div>
+  <details class="tips">
+    <summary>טיפים לצילום</summary>
+    <ul>
+      <li>מצלמים לאורך (טלפון עומד), באור טוב, והטלפון קרוב לפה או עם מיקרופון.</li>
+      <li>אומרים כל רעיון במשפט קצר, ועוצרים שנייה בין משפטים. ככה קל לחתוך.</li>
+      <li>המשפט הראשון הוא הפתיח: משהו שעוצר את הגלילה.</li>
+      <li>לפני/אחרי: מאותה זווית, באותו אור, ובאותו מרחק. 3-5 שניות מכל צד מספיק.</li>
+      <li>בירולים: 5-15 קליפים קצרים, למשל ידיים עובדות, מכונה, מספריים, מראה, לקוח מרוצה.</li>
+      <li>הכי טוב לעבוד מהמחשב בכרום. בטלפון זה עובד, אבל לאט יותר.</li>
+    </ul>
+  </details>
+</header>
+
+<main class="layout">
+  <div class="steps">
+
+    <section class="card" id="step-files">
+      <h2><span class="num">1</span> החומרים</h2>
+
+      <div class="field">
+        <div class="label">סרטון ראשי שאתה מדבר בו, או הקלטה <span class="opt">(לא חובה למונטאז׳ ולפני/אחרי)</span></div>
+        <label class="drop" id="dropMain">
+          <input type="file" id="inMain" accept="video/*,audio/*">
+          <span class="drop-text">גרור לכאן או לחץ לבחירה</span>
+        </label>
+        <div class="file-info" id="mainInfo"></div>
+      </div>
+
+      <div class="field">
+        <div class="label">בירולים: קליפים או תמונות מהעבודה <span class="opt">(כמה שרוצים)</span></div>
+        <label class="drop small">
+          <input type="file" id="inBroll" accept="video/*,image/*" multiple>
+          <span class="drop-text">+ הוסף בירולים</span>
+        </label>
+        <div class="thumbs" id="brollList"></div>
+      </div>
+
+      <div class="field">
+        <div class="label">לפני / אחרי <span class="opt">(תמונה או קליפ לכל צד)</span></div>
+        <div id="pairList" class="pairs"></div>
+        <div class="row">
+          <button class="btn ghost" id="addPair">+ זוג חדש</button>
+          <label class="btn ghost file-btn">העלאה מרוכזת
+            <input type="file" id="inPairsBulk" accept="video/*,image/*" multiple>
+          </label>
+        </div>
+        <p class="hint">בהעלאה מרוכזת: הקבצים מסודרים לפי השם, וכל שניים נהיים זוג (לפני, אחרי, לפני, אחרי...).</p>
+      </div>
+    </section>
+
+    <section class="card" id="step-words">
+      <h2><span class="num">2</span> מה נכנס לסרטון</h2>
+      <div class="field">
+        <div class="label">אורך הסרטון</div>
+        <div class="chips" id="chTarget"></div>
+      </div>
+
+      <div id="asrBox">
+        <p class="hint">התמלול רץ אצלך במחשב, עם מודל עברית של ivrit-ai. בפעם הראשונה הוא מוריד את המודל (בערך 0.6GB, נשמר לפעם הבאה).</p>
+        <div class="row">
+          <button class="btn primary" id="btnAsr" disabled>תמלל את הסרטון</button>
+          <select id="selQuality" class="select">
+            <option value="fast">מהיר</option>
+            <option value="best">מדויק יותר (הורדה גדולה)</option>
+          </select>
+          <button class="btn ghost" id="btnSkipAsr" disabled>בלי תמלול (בלי כתוביות)</button>
+        </div>
+        <div class="progress hidden" id="asrProg"><div class="bar"><i></i></div><span class="ptext"></span></div>
+      </div>
+
+      <div id="segBox" class="hidden">
+        <div class="row between">
+          <div class="sum" id="segSum"></div>
+          <div class="row">
+            <button class="btn ghost" id="btnAuto">בחירה אוטומטית לפי האורך</button>
+            <button class="btn ghost" id="btnAll">הכל</button>
+          </div>
+        </div>
+        <p class="hint">סמן אילו משפטים נכנסים. אפשר לתקן את הטקסט, וזה מה שיופיע בכתוביות. ▶ משמיע את המשפט.</p>
+        <div class="segs" id="segList"></div>
+      </div>
+    </section>
+
+    <section class="card" id="step-style">
+      <h2><span class="num">3</span> סגנון</h2>
+
+      <div class="field">
+        <div class="label">אילו גרסאות לייצר <span class="opt">(אפשר כמה)</span></div>
+        <div class="formats" id="fmtList"></div>
+      </div>
+
+      <div class="field">
+        <div class="label">גודל</div>
+        <div class="chips" id="chAspect"></div>
+      </div>
+
+      <details class="group" open>
+        <summary>כתוביות וטקסט</summary>
+        <label class="toggle"><input type="checkbox" id="tgCaptions"> כתוביות מילה-מילה</label>
+        <div class="sub">
+          <div class="chips" id="chCapStyle"></div>
+          <div class="chips" id="chCapPos"></div>
+          <div class="row">
+            <label class="range">גודל <input type="range" id="rgCapSize" min="0.7" max="1.5" step="0.05"></label>
+            <label class="color">צבע הדגשה <input type="color" id="inCapColor"></label>
+          </div>
+        </div>
+        <label class="field-inline">כותרת קבועה למעלה <input type="text" id="inTitle" placeholder="למשל: תספורת ב-20 דקות ✂"></label>
+      </details>
+
+      <details class="group" open>
+        <summary>מוזיקה</summary>
+        <div class="chips" id="chMusicMode"></div>
+        <div id="musicGen" class="sub">
+          <div class="chips" id="chMusicStyle"></div>
+          <div class="row">
+            <button class="btn ghost" id="btnMusicShuffle">🎲 מנגינה אחרת</button>
+            <button class="btn ghost" id="btnMusicListen">▶ שמע</button>
+          </div>
+        </div>
+        <div id="musicFile" class="sub">
+          <label class="btn ghost file-btn">בחר שיר <input type="file" id="inMusic" accept="audio/*,video/*"></label>
+          <span class="file-info" id="musicInfo"></span>
+          <p class="hint">רק שיר שמותר לך להשתמש בו. לסאונד טרנדי: לייצא בלי מוזיקה ולהוסיף אותו באינסטגרם/טיקטוק.</p>
+        </div>
+        <label class="range">עוצמה <input type="range" id="rgMusicVol" min="0" max="100" step="1"></label>
+      </details>
+
+      <details class="group" open>
+        <summary>לפני / אחרי</summary>
+        <div class="chips" id="chBaPlace"></div>
+        <div class="chips" id="chBaStyle"></div>
+        <label class="range">אורך כל חשיפה <input type="range" id="rgBaLen" min="2" max="6" step="0.5"><span id="baLenVal"></span></label>
+      </details>
+
+      <details class="group">
+        <summary>חיתוכים ואפקטים</summary>
+        <label class="range">קצב בירולים <input type="range" id="rgPace" min="1" max="4" step="0.25"><span id="paceVal"></span></label>
+        <div class="chips" id="chTrans"></div>
+        <label class="toggle"><input type="checkbox" id="tgPunch"> זום-אין בכל קפיצה בדיבור</label>
+        <div class="chips" id="chFilter"></div>
+        <button class="btn ghost" id="btnShuffle">🔀 ערבב בירולים</button>
+      </details>
+
+      <details class="group">
+        <summary>סיום (קריאה לפעולה)</summary>
+        <label class="toggle"><input type="checkbox" id="tgCta"> כרטיס סיום</label>
+        <div class="sub">
+          <label class="field-inline">שורה ראשית <input type="text" id="inCtaText" placeholder="לקביעת תור"></label>
+          <label class="field-inline">שורה שנייה <input type="text" id="inCtaSub" placeholder="050-0000000 · @instagram"></label>
+          <label class="range">כמה שניות <input type="range" id="rgCtaLen" min="1.5" max="5" step="0.5"><span id="ctaLenVal"></span></label>
+        </div>
+      </details>
+
+      <details class="group">
+        <summary>לוגו</summary>
+        <label class="btn ghost file-btn">בחר לוגו (PNG שקוף הכי טוב) <input type="file" id="inLogo" accept="image/*"></label>
+        <button class="btn ghost hidden" id="btnLogoRemove">הסר</button>
+        <div class="chips" id="chLogoPos"></div>
+        <div class="row">
+          <label class="range">גודל <input type="range" id="rgLogoSize" min="6" max="35" step="1"></label>
+          <label class="range">שקיפות <input type="range" id="rgLogoOp" min="30" max="100" step="5"></label>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <aside class="preview">
+    <div class="card sticky">
+      <h2><span class="num">4</span> תצוגה ויצוא</h2>
+      <div class="chips small" id="chPreview"></div>
+      <div class="phone"><canvas id="cv" width="1080" height="1920"></canvas><div class="ph-empty" id="phEmpty">העלה חומרים כדי לראות תצוגה</div></div>
+      <div class="row center">
+        <button class="btn primary" id="btnPlay">▶ נגן תצוגה</button>
+        <button class="btn ghost" id="btnStop">■ עצור</button>
+        <span class="time" id="tTime"></span>
+      </div>
+      <button class="btn big" id="btnExport">צור את הסרטונים</button>
+      <div class="progress hidden" id="expProg"><div class="bar"><i></i></div><span class="ptext"></span></div>
+      <p class="hint" id="expHint">הייצוא רץ בזמן אמת: סרטון של 30 שניות לוקח בערך 30 שניות. צריך להשאיר את הטאב פתוח ובחזית.</p>
+      <div class="results" id="results"></div>
+    </div>
+  </aside>
+</main>
+
+<div id="stage" aria-hidden="true"></div>
+<div class="toast hidden" id="toast"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
