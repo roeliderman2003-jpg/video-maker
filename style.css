@@ -134,6 +134,25 @@ input[type=text] { width: 100%; }
 .result small { color: var(--muted); display: block; margin-bottom: 6px; }
 .result a { display: inline-block; text-decoration: none; }
 
+.hint.warn { color: var(--accent); }
+.hint.bad { color: var(--bad); }
+
+/* Phone: the preview sits at the bottom of a long page, so the two actions stay under the thumb. */
+.mbar { display: none; }
+@media (max-width: 960px) {
+  .mbar { display: flex; gap: 8px; position: fixed; inset: auto 0 0 0; z-index: 15; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: rgba(13,13,16,.94); border-top: 1px solid var(--line); backdrop-filter: blur(8px); }
+  .mbar .btn { flex: 1; padding: 13px; font-size: 16px; }
+  body { padding-bottom: 76px; }
+  .toast { bottom: 86px; }
+  .chip { padding: 8px 14px; }
+  .btn { padding: 11px 14px; }
+  .brand h1 { font-size: 22px; }
+  .card { padding: 14px; }
+  .seg { grid-template-columns: auto 1fr auto; }
+  .seg .t { grid-column: 2; grid-row: 2; }
+  .phone { max-width: 260px; }
+}
+
 #stage { position: fixed; left: 0; bottom: 0; width: 2px; height: 2px; overflow: hidden; opacity: .01; pointer-events: none; }
 #stage video { width: 2px; height: 2px; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #2a2a33; border: 1px solid var(--line); color: var(--text); padding: 10px 16px; border-radius: 12px; z-index: 20; max-width: calc(100% - 32px); box-shadow: 0 8px 30px rgba(0,0,0,.4); }

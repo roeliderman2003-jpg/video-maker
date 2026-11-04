@@ -291,6 +291,7 @@ export class Player {
     const [W, H] = ASPECTS[o.aspect];
     this.canvas.width = W; this.canvas.height = H;
     Object.assign(this, { W, H, plan, A, o, vi: 0, act: null, t: 0 });
+    this.computeZones();
     for (const p of this.pool) { p.el.pause(); p.req = null; }
     for (const v of plan.vis) for (const r of reqsOf(v)) { r.player = null; r.started = false; }
     const ac = this.audio.ctx;
@@ -419,7 +420,7 @@ export class Player {
         else { this.drawMain(W / 2, 0, W / 2, H, pz); this.drawMedia(v.m, t, 0, 0, W / 2, H, tz); }
       } else if (v.layout === "pip") {
         this.drawMedia(v.m, t, 0, 0, W, H, tz);
-        const pw = Math.min(W, H) * 0.4, ph = pw * 1.3, x = W * 0.05, y = H * (o.title ? 0.19 : 0.08);
+        const pw = Math.min(W, H) * 0.4, ph = pw * 1.3, x = W * 0.05, y = this.Z.below;
         c.save();
         c.shadowColor = "rgba(0,0,0,.5)"; c.shadowBlur = 30;
         this.round(x - 6, y - 6, pw + 12, ph + 12, 34); c.fillStyle = "#fff"; c.fill();
@@ -429,7 +430,7 @@ export class Player {
     }
     c.filter = "none";
     if (o.trans === "flash" && v && v.t0 > 0 && since < 0.16) { c.fillStyle = `rgba(255,255,255,${0.8 * (1 - since / 0.16)})`; c.fillRect(0, 0, W, H); }
-    if (o.title) this.drawTitle(o.title);
+    if (this.Z.title) this.drawTitle();
     if (o.captions && plan.groups.length) this.drawCaptions(t, v);
     if (o.cta && o.ctaText && t >= plan.total - o.ctaLen) this.drawCta(t - (plan.total - o.ctaLen));
     if (this.A.logo) this.drawLogo();
@@ -438,7 +439,7 @@ export class Player {
 
   drawBA(v, t) {
     const { c, W, H, o } = this;
-    const ly = H * (o.title ? 0.27 : 0.2);
+    const ly = this.Z.below + H * 0.05;
     if (o.baStyle === "side") {
       if (H >= W) {
         this.drawMedia(v.b, t, 0, 0, W, H / 2); this.drawMedia(v.a, t, 0, H / 2, W, H / 2);
@@ -483,14 +484,35 @@ export class Player {
     c.restore();
   }
 
-  drawTitle(text) {
-    const { c, W, H } = this;
-    const size = Math.min(W, H) * 0.058, maxW = W * 0.84;
+  /** Where things go so Instagram/TikTok do not cover them: in 9:16 the top ~10% (header, camera) and the bottom ~20%
+   *  (caption, buttons) are theirs. Logo, then title, then everything else below them. */
+  computeZones() {
+    const { c, W, H, o, A } = this;
+    const tall = H / W > 1.7, m = Math.min(W, H) * 0.04;
+    const top = tall ? H * 0.105 : m, bottom = tall ? H * 0.2 : m;
+    let logo = null;
+    if (A.logo) {
+      const w = Math.min(W, H) * (o.logoSize / 100), h = (w * A.logo.height) / A.logo.width;
+      logo = { w, h, x: o.logoPos.endsWith("r") ? W - w - m : m, y: o.logoPos.startsWith("t") ? top : H - h - bottom };
+    }
+    let y = top + (logo && o.logoPos.startsWith("t") ? logo.h + H * 0.012 : 0), title = null;
+    if (o.title) {
+      const size = Math.min(W, H) * 0.058;
+      c.save();
+      c.font = `800 ${size}px Heebo, Arial, sans-serif`; c.direction = "rtl";
+      const lines = wrap(c, o.title, W * 0.84).slice(0, 2).map(iso);
+      const bw = Math.max(...lines.map((l) => c.measureText(l).width)) + size, bh = lines.length * size * 1.25 + size * 0.5;
+      c.restore();
+      title = { y, size, lines, bw, bh };
+      y += bh;
+    }
+    this.Z = { below: y + H * 0.015, logo, title, capBottom: tall ? 0.71 : 0.76 };
+  }
+
+  drawTitle() {
+    const { c, W } = this, { y, size, lines, bw, bh } = this.Z.title, lh = size * 1.25;
     c.save();
     c.font = `800 ${size}px Heebo, Arial, sans-serif`; c.direction = "rtl"; c.textAlign = "center"; c.textBaseline = "middle";
-    const lines = wrap(c, text, maxW).slice(0, 2).map(iso);
-    const lh = size * 1.25, bw = Math.max(...lines.map((l) => c.measureText(l).width)) + size, bh = lines.length * lh + size * 0.5;
-    const y = H * 0.085;
     this.round(W / 2 - bw / 2, y, bw, bh, size * 0.4); c.fillStyle = "#fff"; c.fill();
     c.fillStyle = "#111";
     lines.forEach((l, i) => c.fillText(l, W / 2, y + size * 0.25 + lh * (i + 0.5)));
@@ -509,14 +531,14 @@ export class Player {
     let size = (single ? 0.12 : 0.072) * unit * o.capSize;
     let pos = o.capPos;
     if (v?.layout === "split" && pos === "bottom" && H >= W) pos = "middle";
-    const y = { bottom: H * 0.76, middle: H * 0.5, top: H * 0.27 }[pos] || H * 0.76;
+    const y = pos === "top" ? this.Z.below + size : pos === "middle" ? H * 0.5 : H * this.Z.capBottom;
     c.save();
     c.direction = "rtl"; c.textAlign = "left"; c.textBaseline = "middle"; c.lineJoin = "round";
     const font = () => (c.font = `800 ${size}px Heebo, Arial, sans-serif`);
     font();
     let widths = words.map((w) => c.measureText(w.text).width), space = size * 0.3;
     let total = widths.reduce((a, b) => a + b, 0) + space * (words.length - 1);
-    if (total > W * 0.88) { size *= (W * 0.88) / total; font(); widths = words.map((w) => c.measureText(w.text).width); space = size * 0.3; total = widths.reduce((a, b) => a + b, 0) + space * (words.length - 1); }
+    if (total > W * 0.8) { size *= (W * 0.8) / total; font(); widths = words.map((w) => c.measureText(w.text).width); space = size * 0.3; total = widths.reduce((a, b) => a + b, 0) + space * (words.length - 1); }
     if (single) {
       const w = words[0], pop = 1 + 0.18 * Math.max(0, 1 - (t - w.t0) / 0.12);
       c.translate(W / 2, y); c.scale(pop, pop);
@@ -569,10 +591,8 @@ export class Player {
 
   drawLogo() {
     const { c, W, H, o, A } = this;
-    const img = A.logo, w = Math.min(W, H) * (o.logoSize / 100), h = (w * img.height) / img.width, m = Math.min(W, H) * 0.04;
-    const x = o.logoPos.endsWith("r") ? W - w - m : m;
-    const y = o.logoPos.startsWith("t") ? m + (o.title ? H * 0.0 : 0) : H - h - m;
-    c.save(); c.globalAlpha = o.logoOpacity / 100; c.drawImage(img, x, y, w, h); c.restore();
+    const { x, y, w, h } = this.Z.logo;
+    c.save(); c.globalAlpha = o.logoOpacity / 100; c.drawImage(A.logo, x, y, w, h); c.restore();
   }
 }
 

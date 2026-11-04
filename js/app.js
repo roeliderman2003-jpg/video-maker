@@ -28,9 +28,17 @@ function ensureAudio() {
   if (audio) return audio;
   const ctx = new AudioContext();
   const master = ctx.createGain(), monitor = ctx.createGain(), dest = ctx.createMediaStreamDestination();
-  master.connect(monitor).connect(ctx.destination);
-  master.connect(dest);
-  audio = { ctx, master, monitor, dest };
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.1;
+  master.connect(limiter);
+  limiter.connect(monitor).connect(ctx.destination);
+  limiter.connect(dest);
+  // The voice chain: a phone recording comes out thin and uneven — cut the rumble, even it out, bring it to one level.
+  const voiceIn = ctx.createGain(), hp = ctx.createBiquadFilter(), comp = ctx.createDynamicsCompressor(), voiceGain = ctx.createGain();
+  hp.type = "highpass"; hp.frequency.value = 85;
+  comp.threshold.value = -24; comp.ratio.value = 3; comp.knee.value = 8; comp.attack.value = 0.004; comp.release.value = 0.18;
+  voiceIn.connect(hp).connect(comp).connect(voiceGain).connect(master);
+  audio = { ctx, master, monitor, dest, voiceIn, voiceGain };
   player = new Player($("cv"), stage, audio);
   return audio;
 }
@@ -49,10 +57,23 @@ async function loadMedia(file) {
     return { kind: "image", url, img, w: img.naturalWidth, h: img.naturalHeight, dur: 0, name: file.name, file };
   }
   const v = document.createElement("video");
-  v.preload = "metadata"; v.muted = true; v.src = url;
+  v.preload = "auto"; v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.src = url;
   await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = () => rej(new Error(`${file.name}: הקובץ לא נפתח בדפדפן`)); });
   if (!isFinite(v.duration)) { v.currentTime = 1e9; await new Promise((r) => (v.ondurationchange = r)); }
-  return { kind: v.videoWidth ? "video" : "audio", url, dur: v.duration, w: v.videoWidth, h: v.videoHeight, name: file.name, file };
+  const m = { kind: v.videoWidth ? "video" : "audio", url, dur: v.duration, w: v.videoWidth, h: v.videoHeight, name: file.name, file };
+  if (m.kind === "video") m.poster = await posterOf(v, Math.min(0.5, m.dur / 2));
+  return m;
+}
+
+/** A still for the thumbnail: iPhone Safari draws no frame for a <video> that has not played. */
+async function posterOf(v, t) {
+  try {
+    await new Promise((res) => { const to = setTimeout(res, 2500); v.onseeked = () => { clearTimeout(to); res(); }; v.currentTime = t; });
+    const c = document.createElement("canvas"), s = 240 / Math.max(v.videoWidth, v.videoHeight);
+    c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.7);
+  } catch { return ""; }
 }
 
 // ---------- step 1: files ----------
@@ -64,13 +85,13 @@ $("inMain").onchange = async (e) => {
     if (m.kind === "image") throw new Error("הקובץ הראשי צריך להיות סרטון או הקלטה");
     A.main = { ...m, isVideo: m.kind === "video" };
     A.segs = []; A.audio16 = null;
-    const { ctx, master } = ensureAudio();
+    const { ctx, voiceIn } = ensureAudio();
     mains?.forEach((el) => el.remove());
     mains = [0, 1].map(() => {
       const el = document.createElement("video");
-      el.playsInline = true; el.preload = "auto"; el.src = m.url;
+      el.playsInline = true; el.setAttribute("playsinline", ""); el.preload = "auto"; el.src = m.url;
       stage.appendChild(el);
-      ctx.createMediaElementSource(el).connect(master);
+      ctx.createMediaElementSource(el).connect(voiceIn);
       return el;
     });
     $("mainInfo").innerHTML = `<b>${esc(f.name)}</b> · ${fmtTime(m.dur)} · ${A.main.isVideo ? `${m.w}×${m.h}` : "הקלטה"}`;
@@ -89,7 +110,7 @@ $("inBroll").onchange = async (e) => {
 };
 
 function thumbEl(m) {
-  return m.kind === "image" ? `<img src="${m.url}" alt="">` : `<video src="${m.url}#t=0.5" muted playsinline preload="metadata"></video>`;
+  return m.kind === "image" ? `<img src="${m.url}" alt="">` : m.poster ? `<img src="${m.poster}" alt="">` : `<video src="${m.url}#t=0.5" muted playsinline preload="metadata"></video>`;
 }
 function renderBrolls() {
   $("brollList").innerHTML = A.brolls.map((m, i) => `<div class="thumb">${thumbEl(m)}<button class="x" data-i="${i}" title="הסר">✕</button>${m.kind === "video" ? `<span class="tag">${m.dur.toFixed(1)}״</span>` : ""}</div>`).join("");
@@ -163,7 +184,14 @@ $("btnAsr").onclick = async () => {
       else if (m.type === "result") pending?.res(m);
       else if (m.type === "error") { if (pending) pending.rej(new Error(m.message)); else rejectReady(new Error(m.message)); }
     };
-    if (!workerReady) { postWorker({ type: "load", quality: S.quality }); setProg("asrProg", 0, "טוען את מודל התמלול…"); await readyP; }
+    if (!workerReady) {
+      // A phone that runs out of memory loading the model reloads the page; the mark tells the next load what happened.
+      try { localStorage.setItem("vm-asr-loading", "1"); } catch {}
+      postWorker({ type: "load", quality: S.quality });
+      setProg("asrProg", 0, "טוען את מודל התמלול…");
+      await readyP;
+      try { localStorage.removeItem("vm-asr-loading"); } catch {}
+    }
     const run = (audio) => new Promise((res, rej) => { pending = { res, rej }; postWorker({ type: "run", id: Date.now(), audio }); });
     const b = chunkBounds(A.rms), segs = [];
     const started = performance.now();
@@ -386,7 +414,9 @@ function renderPreviewChips() {
   $("btnPlay").disabled = !ok.length;
   const exp = S.formats.filter((id) => ok.some((f) => f.id === id));
   $("btnExport").disabled = !exp.length || exporting;
-  $("btnExport").textContent = exp.length ? `צור ${exp.length === 1 ? "סרטון אחד" : `${exp.length} סרטונים`}` : "סמן גרסה אחת לפחות";
+  $("btnExport").textContent = exp.length ? `צור ${exp.length === 1 ? "סרטון אחד" : `${exp.length} סרטונים`}` : ok.length ? "סמן גרסה אחת לפחות" : "העלה חומרים קודם";
+  $("mExport").disabled = $("btnExport").disabled; $("mExport").textContent = exporting ? "מייצא…" : $("btnExport").textContent;
+  $("mPreview").disabled = !ok.length;
 }
 
 function refresh() { renderFormats(); renderPreviewChips(); updateSum(); }
@@ -401,12 +431,30 @@ function makePlan(format) {
 }
 const opts = () => ({ ...S, mime: pickMime() });
 
+/** iPhone plays a video with sound only from a tap: start every main element inside the tap itself, before any await. */
+function unlock() {
+  const { ctx, monitor } = ensureAudio();
+  monitor.gain.value = 0;
+  ctx.resume();
+  // The b-roll players too: in Low Power Mode an iPhone will not start even a muted video without a tap.
+  for (const el of [...(mains || []), ...player.pool.map((p) => p.el)]) { el.play().catch(() => {}); el.pause(); }
+}
+/** The selected speech brought to one level (~-18 dBFS before the compressor), whatever the phone recorded. */
+function setVoiceLevel() {
+  if (!A.rms || !audio) return;
+  let s = 0, n = 0;
+  for (const seg of A.segs) if (seg.on) for (let i = Math.floor(seg.s0 / 0.02); i < Math.min(A.rms.length, seg.s1 / 0.02); i++) { s += A.rms[i] ** 2; n++; }
+  const rms = n ? Math.sqrt(s / n) : 0.12;
+  audio.voiceGain.gain.value = Math.max(0.5, Math.min(6, 0.14 / Math.max(rms, 1e-3)));
+}
+
 async function fontsReady() {
   try { await Promise.all([document.fonts.load("800 40px Heebo"), document.fonts.load("900 40px Heebo"), document.fonts.load("700 40px Heebo")]); } catch {}
 }
 
 $("btnPlay").onclick = async () => {
-  ensureAudio();
+  unlock();
+  setVoiceLevel();
   try {
     await fontsReady();
     const plan = makePlan(S.previewFormat);
@@ -417,12 +465,15 @@ $("btnPlay").onclick = async () => {
   } catch (err) { console.error(err); toast("התצוגה נכשלה: " + err.message, true); }
 };
 $("btnStop").onclick = () => player?.stop();
+$("mPreview").onclick = () => { $("cv").scrollIntoView({ behavior: "smooth", block: "center" }); if (player?.running && !exporting) player.stop(); else $("btnPlay").click(); };
+$("mExport").onclick = () => { $("cv").scrollIntoView({ behavior: "smooth", block: "center" }); $("btnExport").click(); };
 
 let exporting = false, wake = null;
 $("btnExport").onclick = async () => {
   const list = S.formats.filter((id) => usableFormats().some((f) => f.id === id));
   if (!list.length) return;
-  ensureAudio();
+  unlock();
+  setVoiceLevel();
   exporting = true; refresh();
   try { wake = await navigator.wakeLock?.request("screen"); } catch {}
   const mime = pickMime();
@@ -468,7 +519,14 @@ function addResult(blob, f, total, mime) {
   el.className = "result";
   el.innerHTML = `<video src="${url}" controls playsinline></video>
     <div><b>${f.name}</b><small>${Math.round(total)} שניות · ${S.aspect} · ${(blob.size / 1e6).toFixed(1)}MB${ext === "webm" ? " · WEBM (לאינסטגרם עדיף כרום חדש שמוציא MP4)" : ""}</small>
-    <a class="btn primary" href="${url}" download="${name}">⬇ הורדה</a></div>`;
+    <div class="row"><button class="btn primary share hidden">📲 שמור לגלריה / שתף</button><a class="btn ghost" href="${url}" download="${name}">⬇ הורדה</a></div></div>`;
+  // On a phone the share sheet is the way to the gallery, Instagram and WhatsApp; a download lands in «Files».
+  const file = new File([blob], name, { type: mime.split(";")[0] });
+  const share = el.querySelector(".share");
+  if (navigator.canShare?.({ files: [file] })) {
+    share.classList.remove("hidden");
+    share.onclick = () => navigator.share({ files: [file] }).catch((e) => e.name !== "AbortError" && toast("השיתוף לא הצליח. נסה «הורדה».", true));
+  }
   $("results").prepend(el);
 }
 
@@ -478,6 +536,16 @@ document.addEventListener("visibilitychange", () => {
   if (exporting) { hiddenAbort = true; toast("הייצוא נעצר כי עברת לטאב אחר. כשתחזור הוא יתחיל שוב את הגרסה הזו.", true, 10000); }
   player.stop();
 });
+
+const isPhone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
+try {
+  if (localStorage.getItem("vm-asr-loading")) {
+    localStorage.removeItem("vm-asr-loading");
+    $("asrWarn").textContent = "בפעם הקודמת הטלפון לא הצליח לטעון את התמלול והדף נטען מחדש. אפשר לנסות שוב (לסגור קודם אפליקציות אחרות), או ללחוץ «בלי תמלול» ולקבל סרטונים בלי כתוביות.";
+    $("asrWarn").classList.remove("hidden");
+  }
+} catch {}
+if (isPhone) $("asrPhone").classList.remove("hidden");
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 
