@@ -6,8 +6,9 @@ env.allowLocalModels = false;
 const MODEL = "ivrit-ai/whisper-large-v3-turbo-onnx";
 let asr = null;
 
-async function pickDevice(quality) {
+async function pickDevice(quality, cpu) {
   try {
+    if (cpu) throw 0;
     const ad = self.navigator.gpu && (await self.navigator.gpu.requestAdapter());
     if (ad) {
       if (ad.features.has("shader-f16")) {
@@ -19,9 +20,9 @@ async function pickDevice(quality) {
   return { device: "wasm", dtype: { encoder_model: "q4", decoder_model_merged: "q4" } };
 }
 
-async function load(quality) {
+async function load(quality, cpu) {
   const progress_callback = (p) => postMessage({ type: "progress", status: p.status, file: p.file, loaded: p.loaded, total: p.total });
-  let pick = await pickDevice(quality);
+  let pick = await pickDevice(quality, cpu);
   try {
     asr = await pipeline("automatic-speech-recognition", MODEL, { ...pick, progress_callback });
   } catch (e) {
@@ -35,7 +36,7 @@ async function load(quality) {
 self.onmessage = async (e) => {
   const m = e.data;
   try {
-    if (m.type === "load") await load(m.quality);
+    if (m.type === "load") await load(m.quality, m.cpu);
     if (m.type === "run") {
       const out = await asr(m.audio, { language: "hebrew", task: "transcribe", return_timestamps: true });
       postMessage({ type: "result", id: m.id, text: out.text, chunks: out.chunks || [] });

@@ -21,7 +21,7 @@ const save = () => { try { localStorage.setItem("vm-settings", JSON.stringify(S)
 // ---------- uploaded material ----------
 const A = { main: null, brolls: [], pairs: [], logo: null, segs: [], music: null };
 let mains = null; // two <video> elements of the main recording, wired into the audio graph
-let audio = null, player = null, worker = null, workerReady = false;
+let audio = null, player = null, worker = null, workerReady = false, workerDevice = "";
 const stage = $("stage");
 
 function ensureAudio() {
@@ -180,14 +180,14 @@ $("btnAsr").onclick = async () => {
         files[m.file] = [m.loaded || 0, m.total];
         const [l, t] = Object.values(files).reduce((a, [x, y]) => [a[0] + x, a[1] + y], [0, 0]);
         setProg("asrProg", (l / t) * 100, `מוריד מודל עברית (פעם אחת): ${(l / 1e6).toFixed(0)} / ${(t / 1e6).toFixed(0)} MB`);
-      } else if (m.type === "ready") { workerReady = true; resolveReady(m.device); }
+      } else if (m.type === "ready") { workerReady = true; workerDevice = m.device; resolveReady(m.device); }
       else if (m.type === "result") pending?.res(m);
       else if (m.type === "error") { if (pending) pending.rej(new Error(m.message)); else rejectReady(new Error(m.message)); }
     };
     if (!workerReady) {
       // A phone that runs out of memory loading the model reloads the page; the mark tells the next load what happened.
       try { localStorage.setItem("vm-asr-loading", "1"); } catch {}
-      postWorker({ type: "load", quality: S.quality });
+      postWorker({ type: "load", quality: S.quality, cpu: new URLSearchParams(location.search).has("cpu") });
       setProg("asrProg", 0, "טוען את מודל התמלול…");
       await readyP;
       try { localStorage.removeItem("vm-asr-loading"); } catch {}
@@ -197,7 +197,8 @@ $("btnAsr").onclick = async () => {
     const started = performance.now();
     for (let i = 0; i < b.length - 1; i++) {
       const eta = i ? ` · עוד בערך ${Math.ceil(((performance.now() - started) / i) * (b.length - 1 - i) / 1000)} שניות` : "";
-      setProg("asrProg", (i / (b.length - 1)) * 100, `מתמלל ${fmtTime(b[i])} מתוך ${fmtTime(b.at(-1))}${eta}`);
+      const slow = workerDevice === "wasm" ? " · רץ על המעבד, זה איטי" : "";
+      setProg("asrProg", (i / (b.length - 1)) * 100, `מתמלל ${fmtTime(b[i])} מתוך ${fmtTime(b.at(-1))}${eta}${slow}`);
       const f0 = Math.floor(b[i] / 0.02), f1 = Math.floor(b[i + 1] / 0.02);
       let loud = 0;
       for (let k = f0; k < f1; k++) if (A.rms[k] >= A.thr) loud++;
@@ -546,6 +547,12 @@ try {
   }
 } catch {}
 if (isPhone) $("asrPhone").classList.remove("hidden");
+// Samsung Internet (a Galaxy's default browser) often has no WebGPU and an older recorder: the same page in Chrome is
+// fast and makes MP4. Chrome is on every Galaxy, and an intent link opens this page there.
+if (/SamsungBrowser/i.test(navigator.userAgent)) {
+  $("chromeLink").href = `intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(location.href)};end`;
+  $("samsungBar").classList.remove("hidden");
+}
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 

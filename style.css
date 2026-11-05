@@ -134,6 +134,8 @@ input[type=text] { width: 100%; }
 .result small { color: var(--muted); display: block; margin-bottom: 6px; }
 .result a { display: inline-block; text-decoration: none; }
 
+.samsung { max-width: 1248px; margin: 0 16px 8px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: #2a2410; border: 1px solid var(--accent); border-radius: var(--r); padding: 12px 14px; font-weight: 600; }
+@media (min-width: 1280px) { .samsung { margin: 0 auto 8px; } }
 .hint.warn { color: var(--accent); }
 .hint.bad { color: var(--bad); }
 
