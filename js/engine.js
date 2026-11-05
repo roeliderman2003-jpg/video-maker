@@ -67,7 +67,8 @@ export function buildClips(segs, mainDur) {
 function buildWords(clips) {
   const words = [];
   for (const c of clips) for (const s of c.segs) {
-    const toks = (s.text || "").trim().split(/\s+/).filter(Boolean);
+    // The transcriber marks a new speaker with «-» and ends sentences with a period; on screen both are noise.
+    const toks = (s.text || "").trim().split(/\s+/).map((t) => t.replace(/^[-–—.,…]+|[-–—.,;:…]+$/g, "")).filter(Boolean);
     if (!toks.length) continue;
     const w = toks.map((t) => t.replace(/[^\p{L}\p{N}]/gu, "").length + 2);
     const sum = w.reduce((a, b) => a + b, 0), span = s.s1 - s.s0;
@@ -82,15 +83,20 @@ function buildWords(clips) {
   return words;
 }
 
+/** Each sentence cut into even pieces: «בן, תגיד | שלום למצלמה», never a lone last word «בן, תגיד שלום | למצלמה». */
 function groupWords(words, maxWords, maxChars) {
   const groups = [];
-  let g = null;
-  for (const w of words) {
-    if (!g || g.words.length >= maxWords || g.chars + w.text.length > maxChars || g.seg !== w.seg) {
-      g = { words: [], chars: 0, seg: w.seg };
-      groups.push(g);
+  for (let i = 0; i < words.length;) {
+    let j = i;
+    while (j < words.length && words[j].seg === words[i].seg) j++;
+    const ws = words.slice(i, j);
+    for (let k = Math.ceil(ws.length / maxWords); k <= ws.length; k++) {
+      const parts = Array.from({ length: k }, (_, n) => ws.slice(Math.round((n * ws.length) / k), Math.round(((n + 1) * ws.length) / k)));
+      if (k < ws.length && parts.some((g) => g.reduce((a, w) => a + w.text.length + 1, 0) > maxChars + 1)) continue;
+      for (const g of parts) groups.push({ words: g, seg: ws[0].seg });
+      break;
     }
-    g.words.push(w); g.chars += w.text.length + 1;
+    i = j;
   }
   groups.forEach((g, i) => {
     g.t0 = g.words[0].t0;
@@ -124,7 +130,9 @@ export function buildPlan(p) {
     }
     return (last = bag.pop());
   };
-  const req = (src, len, from = null) => ({ src, in: from ?? (src.kind === "video" ? rnd() * Math.max(0, src.dur - len - 0.1) : 0) });
+  // A phone clip shakes in its first and last moments (the thumb on the button): start a little into it.
+  const inPoint = (src, len) => { const room = src.dur - len - 0.1; return room <= 0 ? 0 : Math.min(0.4, room) + rnd() * Math.max(0, room - 0.8); };
+  const req = (src, len, from = null) => ({ src, in: from ?? (src.kind === "video" ? inPoint(src, len) : 0) });
   const brollShots = (a, b, layout) => {
     const cuts = [a];
     for (;;) {
@@ -196,7 +204,9 @@ export function buildPlan(p) {
   if (p.format !== "ba" && p.pairs.length && o.baPlace !== "none" && total > 2) {
     const len = Math.min(total, Math.max(2, Math.round(o.baLen / beat)) * beat);
     const items = [];
-    if (o.baPlace === "start") items.push(baItem(0, len, p.pairs[0]));
+    // A talking video opens on the face (that is the hook); its before/after comes right after the first shot.
+    const first = f.video ? Math.min(total - len, vis.find((v) => v.t0 >= 1.5)?.t0 ?? 0) : 0;
+    if (o.baPlace === "start") items.push(baItem(Math.max(0, first), Math.max(0, first) + len, p.pairs[0]));
     else if (o.baPlace === "end") items.push(baItem(Math.max(0, total - len), total, p.pairs[0]));
     else {
       const count = Math.min(p.pairs.length, Math.max(1, Math.floor(total / (len * 3))));
@@ -322,19 +332,29 @@ export class Player {
     if (record) {
       const vs = this.canvas.captureStream(30);
       const stream = new MediaStream([...vs.getVideoTracks(), ...this.audio.dest.stream.getAudioTracks()]);
-      rec = new MediaRecorder(stream, { mimeType: o.mime || undefined, videoBitsPerSecond: 12_000_000, audioBitsPerSecond: 192_000 });
+      rec = new MediaRecorder(stream, { mimeType: o.mime || undefined, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
       rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      rec.start(250);
     }
+    // The recording starts once the speaker is really moving, not on a still first frame.
+    if (plan.voice) { this.act.play().catch(() => {}); await playing(this.act); }
+    rec?.start(250);
     this.draw(0);
     const t0 = ac.currentTime;
     musicSrc?.start(t0, music.offset % music.buffer.duration);
-    if (plan.voice) this.act.play().catch(() => {});
 
     let faded = false;
     await new Promise((resolve) => {
       const tick = () => {
         if (this.stopFlag) return resolve();
+        // A phone that has not loaded the next piece of the recording yet stalls the speaker. Recording on would leave a
+        // frozen picture and a hole in the voice under running music: hold the recording and the music until it plays.
+        const stalled = plan.voice && (this.act.seeking || this.act.readyState < 3) && !this.act.ended;
+        if (stalled !== !!this.held) {
+          this.held = stalled;
+          if (stalled) { if (rec?.state === "recording") rec.pause(); ac.suspend(); }
+          else { ac.resume(); if (rec?.state === "paused") rec.resume(); }
+        }
+        if (stalled) return requestAnimationFrame(tick);
         let t;
         if (plan.voice) {
           let c = plan.clips[ci];
@@ -363,6 +383,7 @@ export class Player {
       requestAnimationFrame(tick);
     });
 
+    if (this.held) { this.held = false; await ac.resume(); }
     for (const m of mains || []) m.pause();
     for (const v of plan.vis) reqsOf(v).forEach((r) => this.release(r));
     let blob = null;
@@ -416,11 +437,12 @@ export class Player {
       if (v.layout === "main") this.drawMain(0, 0, W, H, pz);
       else if (v.layout === "broll") this.drawMedia(v.m, t, 0, 0, W, H, tz);
       else if (v.layout === "split") {
-        if (H >= W) { this.drawMain(0, 0, W, H / 2, pz); this.drawMedia(v.m, t, 0, H / 2, W, H / 2, tz); }
-        else { this.drawMain(W / 2, 0, W / 2, H, pz); this.drawMedia(v.m, t, 0, 0, W / 2, H, tz); }
+        // Half the screen already crops the face tight: no punch-in here.
+        if (H >= W) { this.drawMain(0, 0, W, H / 2, tz); this.drawMedia(v.m, t, 0, H / 2, W, H / 2, tz); }
+        else { this.drawMain(W / 2, 0, W / 2, H, tz); this.drawMedia(v.m, t, 0, 0, W / 2, H, tz); }
       } else if (v.layout === "pip") {
         this.drawMedia(v.m, t, 0, 0, W, H, tz);
-        const pw = Math.min(W, H) * 0.4, ph = pw * 1.3, x = W * 0.05, y = this.Z.below;
+        const pw = Math.min(W, H) * 0.38, ph = pw * 1.5, x = W * 0.05, y = this.Z.below;
         c.save();
         c.shadowColor = "rgba(0,0,0,.5)"; c.shadowBlur = 30;
         this.round(x - 6, y - 6, pw + 12, ph + 12, 34); c.fillStyle = "#fff"; c.fill();
@@ -429,7 +451,7 @@ export class Player {
       } else if (v.layout === "ba") this.drawBA(v, t);
     }
     c.filter = "none";
-    if (o.trans === "flash" && v && v.t0 > 0 && since < 0.16) { c.fillStyle = `rgba(255,255,255,${0.8 * (1 - since / 0.16)})`; c.fillRect(0, 0, W, H); }
+    if (o.trans === "flash" && v && v.t0 > 0 && since < 0.12) { c.fillStyle = `rgba(255,255,255,${0.5 * (1 - since / 0.12)})`; c.fillRect(0, 0, W, H); }
     if (this.Z.title) this.drawTitle();
     if (o.captions && plan.groups.length) this.drawCaptions(t, v);
     if (o.cta && o.ctaText && t >= plan.total - o.ctaLen) this.drawCta(t - (plan.total - o.ctaLen));
@@ -572,7 +594,8 @@ export class Player {
   drawCta(dt) {
     const { c, W, H, o } = this;
     const k = ease(clamp01(dt / 0.35)), unit = Math.min(W, H * 0.5625);
-    const s1 = unit * 0.078, s2 = unit * 0.056, y = H * 0.4 + (1 - k) * 60;
+    // Below the face and the small window, above the captions.
+    const s1 = unit * 0.078, s2 = unit * 0.056, y = H * (H / W > 1.7 ? 0.585 : 0.55) + (1 - k) * 60;
     c.save();
     c.globalAlpha = k; c.direction = "rtl"; c.textAlign = "center"; c.textBaseline = "middle";
     c.font = `900 ${s1}px Heebo, Arial, sans-serif`;
@@ -616,6 +639,14 @@ function seekTo(el, t) {
     const to = setTimeout(done, 4000);
     el.addEventListener("seeked", done);
     el.currentTime = t;
+  });
+}
+function playing(el) {
+  if (!el.paused && el.readyState >= 3) return Promise.resolve();
+  return new Promise((res) => {
+    const done = () => { el.removeEventListener("playing", done); clearTimeout(to); res(); };
+    const to = setTimeout(done, 1500);
+    el.addEventListener("playing", done);
   });
 }
 function ready(el) {

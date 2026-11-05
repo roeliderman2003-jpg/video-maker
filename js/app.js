@@ -30,7 +30,7 @@ function ensureAudio() {
   const ctx = new AudioContext();
   const master = ctx.createGain(), monitor = ctx.createGain(), dest = ctx.createMediaStreamDestination();
   const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.1;
+  limiter.threshold.value = -3; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.1;
   master.connect(limiter);
   limiter.connect(monitor).connect(ctx.destination);
   limiter.connect(dest);
@@ -54,7 +54,7 @@ async function loadMedia(file) {
   const url = URL.createObjectURL(file);
   if (file.type.startsWith("image/") || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.name)) {
     const img = new Image(); img.src = url;
-    try { await img.decode(); } catch { throw new Error(/hei[cf]/i.test(file.name + file.type) ? `${file.name}: תמונת HEIC של אייפון לא נפתחת בדפדפן. שמור אותה כ-JPG.` : `${file.name}: התמונה לא נפתחה`); }
+    try { await new Promise((res, rej) => { img.onload = res; img.onerror = rej; if (img.complete && img.naturalWidth) res(); }); } catch { throw new Error(/hei[cf]/i.test(file.name + file.type) ? `${file.name}: תמונת HEIC של אייפון לא נפתחת בדפדפן. שמור אותה כ-JPG.` : `${file.name}: התמונה לא נפתחה`); }
     return { kind: "image", url, img, w: img.naturalWidth, h: img.naturalHeight, dur: 0, name: file.name, file };
   }
   const v = document.createElement("video");
@@ -370,7 +370,7 @@ function bpmNow() {
 async function musicFor(seconds, voice) {
   const vol = S.musicVol / 100;
   if (S.musicMode === "none" || vol === 0) return null;
-  const gain = voice ? vol * 0.55 : Math.min(1, vol * 2.4);
+  const gain = voice ? vol * 0.36 : Math.min(1.2, vol * 3);
   if (S.musicMode === "file") return A.music ? { buffer: A.music.buffer, offset: A.music.offset, gain } : null;
   const len = Math.ceil(seconds / 10) * 10 + 10;
   const key = `${S.musicStyle}|${S.musicSeed}|${len}`;
@@ -441,13 +441,14 @@ function unlock() {
   // The b-roll players too: in Low Power Mode an iPhone will not start even a muted video without a tap.
   for (const el of [...(mains || []), ...player.pool.map((p) => p.el)]) { el.play().catch(() => {}); el.pause(); }
 }
-/** The selected speech brought to one level (~-18 dBFS before the compressor), whatever the phone recorded. */
+/** The selected speech brought to one level, whatever the phone recorded: with the music the video lands near -14 LUFS,
+ *  where Instagram and TikTok play it, with peaks under -1 dB. */
 function setVoiceLevel() {
   if (!A.rms || !audio) return;
   let s = 0, n = 0;
   for (const seg of A.segs) if (seg.on) for (let i = Math.floor(seg.s0 / 0.02); i < Math.min(A.rms.length, seg.s1 / 0.02); i++) { s += A.rms[i] ** 2; n++; }
   const rms = n ? Math.sqrt(s / n) : 0.12;
-  audio.voiceGain.gain.value = Math.max(0.5, Math.min(6, 0.14 / Math.max(rms, 1e-3)));
+  audio.voiceGain.gain.value = Math.max(0.5, Math.min(6, 0.08 / Math.max(rms, 1e-3)));
 }
 
 async function fontsReady() {
@@ -578,8 +579,10 @@ function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp
 // ---------- local test hook: ?demo loads files listed in demo/manifest.json (not deployed) ----------
 if (new URLSearchParams(location.search).has("demo")) {
   (async () => {
-    const man = await (await fetch("demo/manifest.json")).json();
-    const file = async (p) => { const r = await fetch("demo/" + p); const b = await r.blob(); return new File([b], p, { type: b.type }); };
+    const q = new URLSearchParams(location.search), dir = "demo/" + (q.get("demo") ? q.get("demo") + "/" : "");
+    const man = await (await fetch(dir + "manifest.json")).json();
+    if (q.get("main")) man.main = q.get("main");
+    const file = async (p) => { const r = await fetch(dir + p); const b = await r.blob(); return new File([b], p.split("/").pop(), { type: b.type }); };
     const setFiles = async (id, paths) => { const dt = new DataTransfer(); for (const p of paths) dt.items.add(await file(p)); $(id).files = dt.files; await $(id).onchange({ target: $(id) }); };
     if (man.main) await setFiles("inMain", [man.main]);
     if (man.brolls) await setFiles("inBroll", man.brolls);

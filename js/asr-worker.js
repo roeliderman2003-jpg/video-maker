@@ -3,6 +3,32 @@
 import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.5";
 
 env.allowLocalModels = false;
+
+// The browser cache refuses the 370 MB encoder ("Unexpected internal error"), so the model downloaded again on every
+// visit. The site's private file system holds it; the ".ok" mark is written last, so a cut-off download is not reused.
+const fileCache = {
+  dir: async () => (await navigator.storage.getDirectory()).getDirectoryHandle("models", { create: true }),
+  name: (key) => String(key).replace(/^https?:\/\//, "").replace(/[^\w.-]+/g, "_"),
+  async match(key) {
+    try {
+      const d = await fileCache.dir(), n = fileCache.name(key);
+      await d.getFileHandle(n + ".ok");
+      const f = await (await d.getFileHandle(n)).getFile();
+      return new Response(f, { headers: { "content-length": String(f.size) } });
+    } catch { return undefined; }
+  },
+  async put(key, response) {
+    try {
+      const d = await fileCache.dir(), n = fileCache.name(key);
+      await response.body.pipeTo(await (await d.getFileHandle(n, { create: true })).createWritable());
+      await (await (await d.getFileHandle(n + ".ok", { create: true })).createWritable()).close();
+    } catch (e) { console.warn("model not saved, it will download again next time:", e); }
+  },
+};
+if (self.navigator.storage?.getDirectory && self.FileSystemFileHandle?.prototype.createWritable) {
+  env.useBrowserCache = false; env.useCustomCache = true; env.customCache = fileCache;
+}
+
 const MODEL = "ivrit-ai/whisper-large-v3-turbo-onnx";
 let asr = null;
 
