@@ -1,6 +1,7 @@
 import { SR, decodeTo16k, rmsFrames, speechThreshold, chunkBounds, tighten, vadSegments, autoSelect, fmtTime } from "./audio.js";
 import { ASPECTS, FORMATS, formatBlocked, buildPlan, pickMime, Player } from "./engine.js";
 import { STYLES, generateTrack, detectBeat } from "./music.js";
+import { defragment } from "./mp4fix.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -234,7 +235,7 @@ $("btnSkipAsr").onclick = async () => {
     A.segs = vadSegments(A.rms, A.thr);
     if (!A.segs.length) throw new Error("לא נמצא דיבור בסרטון");
     autoSelect(A.segs, S.target);
-    setProg("asrProg", 100, `נמצאו ${A.segs.length} קטעי דיבור (בלי כתוביות)`);
+    setProg("asrProg", 100, `נמצאו ${A.segs.length} קטעי דיבור. רוצה כתוביות? הקלד את הטקסט בכל קטע למטה`);
     renderSegs(); refresh();
   } catch (err) { toast(err.message, true); }
 };
@@ -415,7 +416,7 @@ function renderPreviewChips() {
   $("btnPlay").disabled = !ok.length;
   const exp = S.formats.filter((id) => ok.some((f) => f.id === id));
   $("btnExport").disabled = !exp.length || exporting;
-  $("btnExport").textContent = exp.length ? `צור ${exp.length === 1 ? "סרטון אחד" : `${exp.length} סרטונים`}` : ok.length ? "סמן גרסה אחת לפחות" : "העלה חומרים קודם";
+  $("btnExport").textContent = exp.length ? `צור ${exp.length === 1 ? "סרטון אחד" : `${exp.length} סרטונים`}` : A.main && !A.segs.length && S.formats.some((id) => FORMATS.find((f) => f.id === id)?.voice) ? "קודם לחץ «תמלל» (שלב 2)" : ok.length ? "סמן גרסה אחת לפחות" : "העלה חומרים קודם";
   $("mExport").disabled = $("btnExport").disabled; $("mExport").textContent = exporting ? "מייצא…" : $("btnExport").textContent;
   $("mPreview").disabled = !ok.length;
 }
@@ -497,10 +498,16 @@ $("btnExport").onclick = async () => {
         });
         if (blob || !hiddenAbort) break;
         // The browser stops drawing a tab in the background, so that take is spoiled: start this version again.
-        setProg("expProg", 0, `${head} · נעצר כי הטאב עבר לרקע. יתחיל מחדש כשתחזור לכאן`);
+        setProg("expProg", 0, `${head} · נעצר כי יצאת מהדף. יתחיל מחדש כשתחזור לכאן`);
         while (document.hidden) await new Promise((r) => setTimeout(r, 300));
       }
       if (!blob) break;
+      if (mime.startsWith("video/mp4")) {
+        try {
+          const fixed = defragment(new Uint8Array(await blob.arrayBuffer()));
+          if (fixed) blob = new Blob([fixed], { type: "video/mp4" });
+        } catch (e) { console.warn("MP4 rebuild failed; keeping the recorder's file", e); }
+      }
       addResult(blob, f, plan.total, mime);
     }
     setProg("expProg", 100, "מוכן ✓ הסרטונים למטה");
@@ -534,7 +541,7 @@ function addResult(blob, f, total, mime) {
 let hiddenAbort = false;
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden || !player?.running) return;
-  if (exporting) { hiddenAbort = true; toast("הייצוא נעצר כי עברת לטאב אחר. כשתחזור הוא יתחיל שוב את הגרסה הזו.", true, 10000); }
+  if (exporting) { hiddenAbort = true; toast("הייצוא נעצר כי יצאת מהדף (אפליקציה אחרת או מסך כבוי). כשתחזור הוא יתחיל שוב את הגרסה הזו.", true, 10000); }
   player.stop();
 });
 
@@ -549,6 +556,18 @@ try {
 if (isPhone) $("asrPhone").classList.remove("hidden");
 // Samsung Internet (a Galaxy's default browser) often has no WebGPU and an older recorder: the same page in Chrome is
 // fast and makes MP4. Chrome is on every Galaxy, and an intent link opens this page there.
+// Without WebGPU the transcriber runs on the processor: minutes per sentence on a phone. Say so before he waits.
+(async () => {
+  let gpu = false;
+  try { gpu = !!(await navigator.gpu?.requestAdapter()); } catch {}
+  if (gpu && !new URLSearchParams(location.search).has("cpu")) return;
+  $("asrNoGpu").classList.remove("hidden");
+  $("btnAsr").textContent = "תמלל בכל זאת (איטי)";
+  $("btnAsr").classList.replace("primary", "ghost");
+  $("btnSkipAsr").classList.replace("ghost", "primary");
+  const inChrome = /Chrome\/\d/.test(navigator.userAgent) && !/SamsungBrowser|EdgA?|OPR|Firefox/i.test(navigator.userAgent);
+  if (inChrome) $("asrNoGpu").textContent = "⚠️ המכשיר הזה לא תומך בתמלול מהיר, ובו התמלול יהיה איטי מאוד (10 דקות ומעלה). עדיף «בלי תמלול» ולהקליד את הכתוביות בעצמך, או לתמלל מהמחשב.";
+})();
 if (/SamsungBrowser/i.test(navigator.userAgent)) {
   $("chromeLink").href = `intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(location.href)};end`;
   $("samsungBar").classList.remove("hidden");

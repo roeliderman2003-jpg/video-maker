@@ -85,6 +85,7 @@
         <p class="hint">התמלול רץ אצלך במכשיר, עם מודל עברית של ivrit-ai. בפעם הראשונה הוא מוריד את המודל (בערך 0.6GB, נשמר לפעם הבאה).</p>
         <p class="hint warn hidden" id="asrPhone">📶 בטלפון: להתחבר ל-WiFi לפני ההורדה הראשונה, ולהשאיר את המסך דלוק עד שזה נגמר.</p>
         <p class="hint bad hidden" id="asrWarn"></p>
+        <p class="hint bad hidden" id="asrNoGpu">⚠️ בדפדפן הזה התמלול יהיה איטי מאוד (10 דקות ומעלה) ועלול להיתקע. עדיף לפתוח את הקישור בכרום. אפשר גם «בלי תמלול» ולהקליד את הכתוביות בעצמך.</p>
         <div class="row">
           <button class="btn primary" id="btnAsr" disabled>תמלל את הסרטון</button>
           <select id="selQuality" class="select">
@@ -104,7 +105,7 @@
             <button class="btn ghost" id="btnAll">הכל</button>
           </div>
         </div>
-        <p class="hint">סמן אילו משפטים נכנסים. אפשר לתקן את הטקסט, וזה מה שיופיע בכתוביות. ▶ משמיע את המשפט.</p>
+        <p class="hint">סמן אילו משפטים נכנסים. אפשר לתקן או להקליד את הטקסט, וזה מה שיופיע בכתוביות. ▶ משמיע את הקטע.</p>
         <div class="segs" id="segList"></div>
       </div>
     </section>
@@ -205,7 +206,7 @@
       </div>
       <button class="btn big" id="btnExport">צור את הסרטונים</button>
       <div class="progress hidden" id="expProg"><div class="bar"><i></i></div><span class="ptext"></span></div>
-      <p class="hint" id="expHint">הייצוא רץ בזמן אמת: סרטון של 30 שניות לוקח בערך 30 שניות. צריך להשאיר את הטאב פתוח ובחזית.</p>
+      <p class="hint" id="expHint">הייצוא רץ בזמן אמת: סרטון של 30 שניות לוקח בערך 30 שניות. צריך להישאר בדף עם מסך דלוק עד שזה נגמר.</p>
       <div class="results" id="results"></div>
     </div>
   </aside>
