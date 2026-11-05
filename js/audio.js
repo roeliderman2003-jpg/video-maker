@@ -94,8 +94,12 @@ export function vadSegments(r, thr) {
 const FILLERS = /^(אה+|אמ+|אממ+|אהה+|כאילו|יעני|אוקיי|[.,?!\s…-])*$/;
 export const isFiller = (s) => !s.text.trim() ? false : FILLERS.test(s.text.trim());
 
-/** Picks the sentences that fill the target best: keeps the order, always the first (the hook), the last when it
- *  fits (the ending), and as close to the target as possible without going over by more than half a second. */
+const ends = (s) => /[.?!…]["'״]?$/.test(s.text.trim());
+
+/** Picks the sentences for the target length. First choice: one stretch of sentences that follow each other, starting
+ *  where a thought starts and ending where one ends — sentences picked from all over a recording to fill the seconds
+ *  open mid-thought and jump between subjects. Only when no stretch fills the length well, the best fill from anywhere
+ *  (always the first sentence, the last when it fits). Never over the target by more than half a second. */
 export function autoSelect(segs, target) {
   segs.forEach((s) => (s.on = !isFiller(s) && s.s1 - s.s0 >= 0.4));
   if (!target) return;
@@ -103,6 +107,24 @@ export function autoSelect(segs, target) {
   const dur = (i) => segs[i].s1 - segs[i].s0 + 0.2;
   const sum = idx.reduce((a, i) => a + dur(i), 0);
   if (sum <= target + 0.5 || !idx.length) return;
+
+  const texts = segs.some((s) => s.text.trim());
+  const opens = (i) => i === idx[0] || !texts || ends(segs[i - 1]);
+  const closes = (i) => !texts || ends(segs[i]);
+  let run = null;
+  for (let a = 0; a < idx.length; a++) {
+    let len = 0;
+    for (let b = a; b < idx.length && len + dur(idx[b]) <= target + 0.5; b++) {
+      len += dur(idx[b]);
+      const score = len / target + (opens(idx[a]) ? 0.15 : 0) + (closes(idx[b]) ? 0.15 : 0) + (a === 0 ? 0.05 : 0);
+      if (!run || score > run.score) run = { a, b, len, score };
+    }
+  }
+  if (run && run.len >= target * 0.7) {
+    const keep = new Set(idx.slice(run.a, run.b + 1));
+    segs.forEach((s, i) => (s.on = keep.has(i)));
+    return;
+  }
   const U = 10, cap = Math.round((target + 0.5) * U);
   const solve = (forced) => {
     const base = forced.reduce((a, i) => a + Math.round(dur(i) * U), 0);

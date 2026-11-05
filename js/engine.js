@@ -130,8 +130,24 @@ export function buildPlan(p) {
     }
     return (last = bag.pop());
   };
-  // A phone clip shakes in its first and last moments (the thumb on the button): start a little into it.
-  const inPoint = (src, len) => { const room = src.dur - len - 0.1; return room <= 0 ? 0 : Math.min(0.4, room) + rnd() * Math.max(0, room - 0.8); };
+  // A phone clip shakes in its first and last moments (the thumb on the button): start a little into it. When the clip
+  // was rated (app.js rateClip), the shot comes from its sharp, lit stretches — one of the near-best, at random, so a
+  // clip used twice does not show the same seconds twice.
+  const inPoint = (src, len) => {
+    const room = src.dur - len - 0.1;
+    if (room <= 0) return 0;
+    const lo = Math.min(0.4, room), hi = lo + Math.max(0, room - 0.8);
+    if (src.rating?.length) {
+      const cands = [];
+      for (let t = lo; t <= hi + 1e-6; t += 0.25) {
+        const q = src.rating.filter((r) => r.t >= t && r.t <= t + len).map((r) => r.q);
+        if (q.length) cands.push({ t, q: 0.6 * (q.reduce((a, b) => a + b, 0) / q.length) + 0.4 * Math.min(...q) });
+      }
+      const best = Math.max(...cands.map((x) => x.q)), good = cands.filter((x) => x.q >= best * 0.85);
+      if (good.length) return good[Math.floor(rnd() * good.length)].t;
+    }
+    return lo + rnd() * (hi - lo);
+  };
   const req = (src, len, from = null) => ({ src, in: from ?? (src.kind === "video" ? inPoint(src, len) : 0) });
   const brollShots = (a, b, layout) => {
     const cuts = [a];
@@ -399,17 +415,24 @@ export class Player {
   }
 
   // ---------- drawing ----------
-  cover(src, sw, sh, x, y, w, h, zoom = 1, fy = 0.5) {
+  /** Fills the box, cropping what does not fit. With a face (0..1 of the source) the crop keeps it a little above the
+   *  middle of the box; without one, centred across and `fy` down. */
+  cover(src, sw, sh, x, y, w, h, zoom = 1, fy = 0.5, face = null) {
     if (!sw || !sh) return;
     const c = this.c, s = Math.max(w / sw, h / sh) * zoom, dw = sw * s, dh = sh * s;
+    let dx = x + (w - dw) / 2, dy = y + (h - dh) * fy;
+    if (face) {
+      dx = Math.min(x, Math.max(x + w - dw, x + w * 0.5 - face.x * dw));
+      dy = Math.min(y, Math.max(y + h - dh, y + h * 0.45 - face.y * dh));
+    }
     c.save();
     c.beginPath(); c.rect(x, y, w, h); c.clip();
-    c.drawImage(src, x + (w - dw) / 2, y + (h - dh) * fy, dw, dh);
+    c.drawImage(src, dx, dy, dw, dh);
     c.restore();
   }
   drawMain(x, y, w, h, zoom) {
     const el = this.act;
-    if (el && el.readyState >= 2) this.cover(el, el.videoWidth, el.videoHeight, x, y, w, h, zoom, 0.35);
+    if (el && el.readyState >= 2) this.cover(el, el.videoWidth, el.videoHeight, x, y, w, h, zoom, 0.35, this.A.main?.face);
   }
   drawMedia(r, t, x, y, w, h, tz = 1) {
     if (!r) return;

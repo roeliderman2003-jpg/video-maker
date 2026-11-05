@@ -2,6 +2,7 @@ import { SR, decodeTo16k, rmsFrames, speechThreshold, chunkBounds, tighten, vadS
 import { ASPECTS, FORMATS, formatBlocked, buildPlan, pickMime, Player } from "./engine.js";
 import { STYLES, generateTrack, detectBeat } from "./music.js";
 import { defragment } from "./mp4fix.js";
+import { findFace } from "./face.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -96,15 +97,42 @@ $("inMain").onchange = async (e) => {
       return el;
     });
     $("mainInfo").innerHTML = `<b>${esc(f.name)}</b> · ${fmtTime(m.dur)} · ${A.main.isVideo ? `${m.w}×${m.h}` : "הקלטה"}`;
+    // In the background: until it answers (or if it finds nobody) the crops stay where they always were.
+    if (A.main.isVideo) findFace(m.url, m.dur).then((face) => { if (A.main?.url === m.url) A.main.face = face; }).catch((e) => console.warn("face detection:", e));
     $("btnAsr").disabled = false; $("btnSkipAsr").disabled = false;
     $("segBox").classList.add("hidden");
   } catch (err) { toast(err.message, true); }
   refresh();
 };
 
+/** How usable each half second of a b-roll is: sharp (a phone swung around blurs whole seconds) and lit enough. The
+ *  edit takes its shots from the good stretches; until this has run (in the background) it picks at random. */
+async function rateClip(m) {
+  const v = document.createElement("video");
+  v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = m.url;
+  await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
+  const W = 144, H = Math.max(2, Math.round((W * m.h) / m.w)), c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d", { willReadFrequently: true }), L = new Float32Array(W * H), out = [];
+  for (let t = 0.25; t < m.dur - 0.1; t += 0.5) {
+    await new Promise((res) => { const to = setTimeout(res, 2500); v.onseeked = () => { clearTimeout(to); res(); }; v.currentTime = t; });
+    g.drawImage(v, 0, 0, W, H);
+    const d = g.getImageData(0, 0, W, H).data;
+    let lum = 0, edge = 0;
+    for (let i = 0; i < W * H; i++) { L[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2]; lum += L[i]; }
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const i = y * W + x; edge += Math.abs(4 * L[i] - L[i - 1] - L[i + 1] - L[i - W] - L[i + W]); }
+    out.push({ t, lum: lum / (W * H), edge });
+  }
+  v.removeAttribute("src"); v.load();
+  const top = Math.max(1e-6, ...out.map((o) => o.edge));
+  m.rating = out.map((o) => ({ t: o.t, q: (o.edge / top) * Math.min(1, o.lum / 70) }));
+}
+let rating = Promise.resolve();
+const rate = (m) => (rating = rating.then(() => rateClip(m)).catch((e) => console.warn("b-roll rating:", e)));
+
 $("inBroll").onchange = async (e) => {
   for (const f of e.target.files) {
-    try { const m = await loadMedia(f); if (m.kind !== "audio") A.brolls.push(m); } catch (err) { toast(err.message, true); }
+    try { const m = await loadMedia(f); if (m.kind !== "audio") { A.brolls.push(m); if (m.kind === "video") rate(m); } } catch (err) { toast(err.message, true); }
   }
   e.target.value = "";
   renderBrolls(); refresh();
@@ -188,6 +216,8 @@ $("btnAsr").onclick = async () => {
     if (!workerReady) {
       // A phone that runs out of memory loading the model reloads the page; the mark tells the next load what happened.
       try { localStorage.setItem("vm-asr-loading", "1"); } catch {}
+      // The model is half a gigabyte: ask the browser not to clear it when the phone runs low on space.
+      navigator.storage?.persist?.().catch(() => {});
       postWorker({ type: "load", quality: S.quality, cpu: new URLSearchParams(location.search).has("cpu") });
       setProg("asrProg", 0, "טוען את מודל התמלול…");
       await readyP;
